@@ -1,5 +1,4 @@
-# Scoutripper
-  # Retrieval-Augmented Generation (RAG) System using Supabase & MiniLM
+# Retrieval-Augmented Generation (RAG) System using Supabase & MiniLM
 
 This repository contains a **production-grade Retrieval-Augmented Generation (RAG) pipeline** built using **Supabase (pgvector)**, **Sentence Transformers (MiniLM)**, and **LLM-based query routing**.
 
