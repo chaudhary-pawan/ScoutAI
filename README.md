@@ -70,9 +70,6 @@ rag/
 ├── .env.example
 └── README.md
 
-yaml
-Copy code
-
 ---
 
 ## 🛠️ Setup Instructions
