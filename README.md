@@ -76,7 +76,7 @@ CLI Output
 ```
 ---
 
-## 🛠 Tech Stack
+```## 🛠 Tech Stack
 
 Python
 
@@ -87,6 +87,64 @@ SentenceTransformers (all-MiniLM-L6-v2)
 Google Gemini (LLM)
 
 dotenv for environment management
-
+```
 ---
 
+``` 📁 Project Structure
+RAG/
+│── rag_pipeline.py     # Single-file RAG + CLI chat
+│── .env                # Environment variables
+│── requirements.txt
+│── README.md
+
+
+The entire pipeline (intent detection, retrieval, generation, CLI) lives in one file for simplicity and clarity.
+```
+---
+
+```🔐 Environment Variables
+
+Create a .env file in the project root:
+
+SUPABASE_URL=https://<your-project>.supabase.co
+SUPABASE_KEY=<your-service-role-key>
+GEMINI_API_KEY=<your-gemini-api-key>
+
+
+⚠️ Use Supabase service role key, not anon key.
+```
+---
+
+```▶️ How to Run
+
+Create and activate a virtual environment
+
+Install dependencies
+
+pip install -r requirements.txt
+
+
+Run the chatbot
+
+python RAG/rag_pipeline.py
+```
+---
+
+```💬 Example Chat
+You: tell me about kedarkantha trek
+AI: Kedarkantha Trek is a popular Himalayan trek in Uttarakhand, known for its scenic forests,
+snowy trails, and panoramic summit views. It is suitable for beginners and especially famous
+as a winter trek.
+
+You: tell me about most fun experience of scoutripper
+AI: Based on available experiences, Scoutripper’s most fun offerings usually include offbeat
+camping getaways and immersive valley stays that combine adventure, bonfire nights, and
+local cultural experiences.
+
+You: hey how are you
+AI: I’m doing great and ready to help you plan your next adventure 🙂
+
+You: bye
+AI: Bye! 👋 Safe travels.
+```
+---
