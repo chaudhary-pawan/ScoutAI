@@ -1,22 +1,19 @@
-import openai
+import google.generativeai as genai
+import os
+
+genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
+router_model = genai.GenerativeModel("gemini-2.5-flash")
 
 def route_query(query: str):
     prompt = f"""
-Classify the user query into one of the following:
+Classify the user query into ONE category:
 - locations
 - treks
 - experiences
 - multiple
 
-Return ONLY JSON.
-
-Query: "{query}"
+Return ONLY one word.
+Query: {query}
 """
-
-    response = openai.ChatCompletion.create(
-        model="gpt-4o-mini",
-        messages=[{"role": "user", "content": prompt}],
-        temperature=0
-    )
-
-    return eval(response.choices[0].message.content)["route"]
+    response = router_model.generate_content(prompt)
+    return response.text.strip().lower()

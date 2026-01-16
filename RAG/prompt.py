@@ -1,22 +1,23 @@
 def build_prompt(context_chunks, user_query):
-    context_text = "\n".join(
-        [f"{i+1}. {c['content']}" for i, c in enumerate(context_chunks)]
-    )
+    context = []
+
+    for i, chunk in enumerate(context_chunks):
+        source = chunk["source_type"].upper()
+        context.append(f"{i+1}. ({source}) {chunk['doc_content']}")
+
+    joined_context = "\n\n".join(context)
 
     return f"""
-You are a travel assistant.
+You are ScoutAI, a smart travel assistant.
 
 Use ONLY the information below.
-If the answer is not present, say:
-"I don't have enough information."
+If the answer is not present, say you don't know.
 
-Context:
----
-{context_text}
----
+CONTEXT:
+{joined_context}
 
-Question:
+USER QUESTION:
 {user_query}
 
-Answer clearly and concisely.
+Answer clearly and helpfully.
 """
