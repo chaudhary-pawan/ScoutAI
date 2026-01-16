@@ -1,123 +1,92 @@
-# Retrieval-Augmented Generation (RAG) System using Supabase & MiniLM
+# 🧭 ScoutAI — Intent-Driven RAG Chatbot (CLI)
 
-This repository contains a **production-grade Retrieval-Augmented Generation (RAG) pipeline** built using **Supabase (pgvector)**, **Sentence Transformers (MiniLM)**, and **LLM-based query routing**.
+ScoutAI is an **intent-aware, retrieval-augmented chatbot** built for travel platforms like **Scoutripper**.  
+It intelligently decides **when to search the database** and **when to answer directly**, ensuring helpful, concise, and user-friendly responses.
 
-The system retrieves semantically relevant information from a vector database, augments the user query with grounded context, and generates accurate responses using an LLM — minimizing hallucinations and improving reliability.
-
----
-
-## 🚀 Features
-
-- 🔍 **Semantic Search** using `all-MiniLM-L6-v2`
-- 🧠 **LLM-based Query Router** (cheap & fast)
-- 🗂️ **Metadata-based Filtering** (location_id, slug, etc.)
-- ⚡ **IVFFLAT indexing** for fast vector similarity search
-- 🧩 **Chunk-based retrieval**
-- ✍️ **Context-grounded prompt augmentation**
-- 🤖 **LLM response generation**
-- 🧪 Modular, clean, and scalable architecture
+The system is designed to **avoid negative responses**, **reduce hallucinations**, and **adapt answer depth based on user intent**.
 
 ---
 
-## 🧠 High-Level Architecture
+## ✨ Key Features
 
+- 🧠 **Intent Classification**
+  - Distinguishes between casual/general queries and database-search queries.
+  - Example:
+    - “Hey, how are you?” → answered directly by LLM
+    - “Tell me about Kedarkantha trek” → searched via RAG
+
+- 🗂 **Domain-Aware Retrieval**
+  - Routes search queries to relevant domains:
+    - `treks`
+    - `experiences`
+    - `locations`
+  - Uses **soft routing** to avoid missing relevant information.
+
+- 🔍 **Vector Search with Supabase**
+  - Embeddings stored in:
+    - `treks_embeddings`
+    - `experience_embeddings`
+    - `locations_embeddings`
+  - Unified search via a SQL view and RPC function.
+
+- 🧾 **Metadata-Driven Context**
+  - Uses stored metadata (title, description, etc.) to enrich responses.
+  - No dependency on relational tables like `locations`.
+
+- 🎯 **Adaptive Answer Depth**
+  - Short, concise answers by default.
+  - Detailed responses only when explicitly requested (e.g., itinerary, full explanation).
+
+- 🙂 **Soft Failure Handling**
+  - Never starts responses with “I don’t know” if related information exists.
+  - Provides best possible insights based on available data.
+
+- 💬 **Interactive CLI Chat**
+  - Continuous chat loop from terminal.
+  - Clean, readable output (no excessive bullets or markdown).
+
+---
+
+## 🏗 Architecture Overview
+
+```text
 User Query
-↓
-LLM Router (classification)
-↓
-Metadata Extraction
-↓
-Query Embedding (MiniLM)
-↓
-Vector Search (Supabase + pgvector + IVFFLAT)
-↓
-Top-K Relevant Chunks
-↓
-Prompt Augmentation
-↓
-LLM Answer Generation
+   ↓
+Intent Classifier (GENERAL / SEARCH)
+   ↓
+┌──────────────────────────┐
+│ GENERAL                  │ → LLM answers directly
+└──────────────────────────┘
+            OR
+┌──────────────────────────┐
+│ SEARCH                   │
+└──────────────────────────┘
+   ↓
+Domain Classifier (soft routing)
+   ↓
+Vector Search (Supabase RPC)
+   ↓
+Fallback Search (if empty)
+   ↓
+Prompt Builder (depth-aware)
+   ↓
+LLM Response
+   ↓
+CLI Output
+```
+---
 
-yaml
-Copy code
+## 🛠 Tech Stack
+
+Python
+
+Supabase (PostgreSQL + pgvector)
+
+SentenceTransformers (all-MiniLM-L6-v2)
+
+Google Gemini (LLM)
+
+dotenv for environment management
 
 ---
 
-## 🧱 Tech Stack
-
-| Layer | Technology |
-|-----|-----------|
-| Vector Database | Supabase (PostgreSQL + pgvector) |
-| Indexing | IVFFLAT |
-| Embeddings | all-MiniLM-L6-v2 |
-| Router LLM | GPT-4o-mini / Gemini Flash |
-| Generator LLM | GPT-4o-mini / Gemini |
-| Backend | Python |
-| Hosting | Vercel / Any cloud |
-
----
-
-## 📂 Project Structure
-
-rag/
-├── db.py # Supabase client
-├── embedder.py # MiniLM query embeddings
-├── router.py # LLM-based query router
-├── retriever.py # Vector similarity search
-├── prompt.py # Prompt construction
-├── generator.py # LLM response generation
-├── main.py # End-to-end RAG pipeline
-├── requirements.txt
-├── .env.example
-└── README.md
-
----
-
-## 🛠️ Setup Instructions
-
-### 1️⃣ Clone the Repository
-```bash
-git clone https://github.com/your-username/rag-supabase.git
-cd rag-supabase
-
-```
-
-2️⃣ Install Dependencies
-bash
-Copy code
-pip install -r requirements.txt
-
-```
-
-3️⃣ Environment Variables
-Create a .env file:
-
-env
-Copy code
-SUPABASE_URL=your_supabase_url
-SUPABASE_KEY=your_service_role_key
-OPENAI_API_KEY=your_openai_api_key
-
-```
-
-4️⃣ Enable pgvector & IVFFLAT (Supabase)
-sql
-Copy code
-CREATE EXTENSION IF NOT EXISTS vector;
-
-CREATE INDEX locations_embeddings_ivfflat
-ON locations_embeddings
-USING ivfflat (embedding vector_cosine_ops)
-WITH (lists = 100);
-
-```
-
-▶️ Usage
-python
-Copy code
-from main import rag_pipeline
-
-response = rag_pipeline(
-    "What are the best places to visit in Manali for 2 days?"
-)
-
-print(response)
