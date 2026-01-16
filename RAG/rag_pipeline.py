@@ -201,12 +201,12 @@ def rag_pipeline(user_query: str) -> str:
 # CLI CHAT LOOP
 # --------------------------------------------------
 if __name__ == "__main__":
-    print("\n🤖 ScoutAI CLI Chat (type 'exit' to quit)\n")
+    print("\n🤖 ScoutAI CLI Chat \n")
 
     while True:
         user_message = input("You: ").strip()
 
-        if user_message.lower() in ["exit", "quit", "bye", "ok, bye", "thanks, bye", "thanks", "thank you"]:
+        if user_message.lower() in ["exit", "quit", "bye", "ok", "thanks, bye", "thanks", "thank you"]:
             print("AI: Bye! 👋 Safe travels.")
             break
 
