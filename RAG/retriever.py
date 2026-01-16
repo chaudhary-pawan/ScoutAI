@@ -1,18 +1,28 @@
 from db import supabase
+from embedder import embed_query
+from router import route_query
+from config import ROUTE_TO_SOURCE_TYPES
 
-def retrieve_chunks(
-    table: str,
-    query_embedding: list,
-    location_id: int,
-    top_k: int = 5
-):
-    supabase.rpc("set_ivfflat_probes", {"value": 10})
+def get_relevant_context_hybrid(user_query: str, location_id: int):
+    # 1. Route intent
+    route = route_query(user_query)
+    source_types = ROUTE_TO_SOURCE_TYPES.get(
+        route, ["locations", "treks", "experiences"]
+    )
 
-    response = supabase.table(table) \
-        .select("content, metadata") \
-        .eq("location_id", location_id) \
-        .order("embedding <-> %s" % query_embedding) \
-        .limit(top_k) \
-        .execute()
+    # 2. Embed query
+    query_embedding = embed_query(user_query)
 
-    return response.data
+    # 3. Call hybrid RPC
+    response = supabase.rpc(
+        "match_documents_hybrid",
+        {
+            "query_embedding": query_embedding,
+            "source_types": source_types,
+            "filter_location_id": location_id,
+            "match_threshold": 0.30,
+            "match_count": 6
+        }
+    ).execute()
+
+    return response.data or []

@@ -1,13 +1,9 @@
-import openai
+import google.generativeai as genai
+import os
+
+genai.configure(api_key=os.getenv("AIzaSyBD-rye1ryz8XkHUWQRDRALdRSDIz1dPcA"))
+gen_model = genai.GenerativeModel("gemini-2.5-flash")
 
 def generate_answer(prompt: str):
-    response = openai.ChatCompletion.create(
-        model="gpt-4o-mini",
-        messages=[
-            {"role": "system", "content": "You are a helpful assistant."},
-            {"role": "user", "content": prompt}
-        ],
-        temperature=0.2
-    )
-
-    return response.choices[0].message.content
+    response = gen_model.generate_content(prompt)
+    return response.text
