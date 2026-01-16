@@ -4,7 +4,7 @@ from generator import generate_answer
 
 def rag_pipeline(user_query: str):
     # TEMP: hardcoded slug (later auto-detect via NER)
-    location_slug = "manali"
+    location_slug = None
 
     # Retrieve relevant chunks
     chunks = get_relevant_context_hybrid(user_query, location_slug)
