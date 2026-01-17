@@ -106,7 +106,7 @@ def retrieve_chunks(query: str, source_types: list):
     return response.data or []
 
 # ==================================================
-# 5️⃣ METADATA ANSWER BUILDER
+# 5️⃣ METADATA ANSWER BUILDER for RAG
 # ==================================================
 def build_metadata_answer(metadata: dict, fields: list) -> str:
     lines = []
