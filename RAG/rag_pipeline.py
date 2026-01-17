@@ -1,13 +1,14 @@
 import os
 import time
+import json
 from dotenv import load_dotenv
 from supabase import create_client
 from sentence_transformers import SentenceTransformer
 import google.generativeai as genai
 
-# --------------------------------------------------
+# ==================================================
 # ENV SETUP
-# --------------------------------------------------
+# ==================================================
 load_dotenv()
 
 SUPABASE_URL = os.getenv("SUPABASE_URL")
@@ -19,25 +20,20 @@ if not all([SUPABASE_URL, SUPABASE_KEY, GEMINI_API_KEY]):
 
 supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 
-# --------------------------------------------------
-# MODELS
-# --------------------------------------------------
-embedder = SentenceTransformer("all-MiniLM-L6-v2")
-
 genai.configure(api_key=GEMINI_API_KEY)
 llm = genai.GenerativeModel("gemini-2.5-flash")
 
-# --------------------------------------------------
-# INTENT CLASSIFIER
-# --------------------------------------------------
+embedder = SentenceTransformer("all-MiniLM-L6-v2")
+
+# ==================================================
+# 1️⃣ INTENT CLASSIFIER
+# ==================================================
 def classify_intent(query: str) -> str:
     prompt = f"""
-You are an intent classifier.
+Classify the user intent.
 
-Classify the user query into ONE category only:
-
-GENERAL → casual talk, greetings, chit-chat
-SEARCH → questions that require searching a travel database
+GENERAL → greetings, chit-chat, about AI, casual talk  
+SEARCH → questions about treks, experiences, locations, prices, details
 
 Return ONLY one word: GENERAL or SEARCH.
 
@@ -46,12 +42,12 @@ Query:
 """
     return llm.generate_content(prompt).text.strip().upper()
 
-# --------------------------------------------------
-# DOMAIN CLASSIFIER (SOFT)
-# --------------------------------------------------
+# ==================================================
+# 2️⃣ DOMAIN CLASSIFIER (SOFT)
+# ==================================================
 def classify_domain(query: str) -> str:
     prompt = f"""
-You are a domain classifier for a travel system.
+Classify the domain of the query.
 
 Domains:
 - treks
@@ -66,9 +62,34 @@ Query:
 """
     return llm.generate_content(prompt).text.strip().lower()
 
-# --------------------------------------------------
-# VECTOR SEARCH
-# --------------------------------------------------
+# ==================================================
+# 3️⃣ METADATA FIELD DETECTOR
+# ==================================================
+def detect_metadata_fields(query: str) -> list:
+    prompt = f"""
+You are an information extractor.
+
+Available metadata fields:
+price, sale_price, duration, altitude, total_distance,
+suitable_age, include, exclude, address, map_location,
+min_people, max_people, min_day_before_booking, overview
+
+Rules:
+- Return ONLY a JSON array
+- For general description → ["overview"]
+- If none apply → []
+
+Query:
+{query}
+"""
+    try:
+        return json.loads(llm.generate_content(prompt).text)
+    except:
+        return []
+
+# ==================================================
+# 4️⃣ VECTOR SEARCH
+# ==================================================
 def retrieve_chunks(query: str, source_types: list):
     query_embedding = embedder.encode(query).tolist()
 
@@ -78,140 +99,168 @@ def retrieve_chunks(query: str, source_types: list):
             "query_embedding": query_embedding,
             "source_types": source_types,
             "match_threshold": 0.30,
-            "match_count": 6
+            "match_count": 5
         }
     ).execute()
 
     return response.data or []
 
-# --------------------------------------------------
-# PROMPT BUILDER
-# --------------------------------------------------
-def build_prompt(chunks, user_query, depth="SHORT"):
-    context = "\n\n".join(
-        f"{c['doc_content']}"
-        for c in chunks
-    )
+# ==================================================
+# 5️⃣ METADATA ANSWER BUILDER
+# ==================================================
+def build_metadata_answer(metadata: dict, fields: list) -> str:
+    lines = []
 
+    for field in fields:
+        if field == "price" and metadata.get("price"):
+            lines.append(f"Price: ₹{metadata['price']}")
+
+        elif field == "sale_price" and metadata.get("sale_price"):
+            lines.append(f"Discounted Price: ₹{metadata['sale_price']}")
+
+        elif field == "duration" and metadata.get("duration"):
+            days = max(1, round(int(metadata["duration"]) / 24))
+            lines.append(f"Duration: {days} days")
+
+        elif field == "altitude" and metadata.get("altitude"):
+            lines.append(f"Maximum Altitude: {metadata['altitude']} ft")
+
+        elif field == "total_distance" and metadata.get("total_distance"):
+            lines.append(f"Total Distance: {metadata['total_distance']} km")
+
+        elif field == "suitable_age" and metadata.get("suitable_age"):
+            lines.append(f"Suitable Age: {metadata['suitable_age']}")
+
+        elif field == "address" and metadata.get("address"):
+            lines.append(f"Location: {metadata['address']}")
+
+        elif field == "min_people" and metadata.get("min_people"):
+            lines.append(f"Minimum Group Size: {metadata['min_people']}")
+
+        elif field == "max_people" and metadata.get("max_people"):
+            lines.append(f"Maximum Group Size: {metadata['max_people']}")
+
+        elif field == "min_day_before_booking" and metadata.get("min_day_before_booking"):
+            lines.append(
+                f"Booking should be done at least {metadata['min_day_before_booking']} days in advance"
+            )
+
+        elif field == "map_location":
+            lat, lng = metadata.get("map_lat"), metadata.get("map_lng")
+            if lat and lng:
+                lines.append(f"Map: https://maps.google.com/?q={lat},{lng}")
+
+        elif field == "include" and metadata.get("include"):
+            lines.append("Included:")
+            for i in metadata["include"]:
+                lines.append(f"- {i['title']}")
+
+        elif field == "exclude" and metadata.get("exclude"):
+            lines.append("Excluded:")
+            for i in metadata["exclude"]:
+                lines.append(f"- {i['title']}")
+
+        elif field == "overview":
+            if metadata.get("title"):
+                lines.append(f"{metadata['title']} is a popular option offered by Scoutripper.")
+            if metadata.get("address"):
+                lines.append(f"It is located at {metadata['address']}.")
+
+    return "\n".join(lines)
+
+# ==================================================
+# 6️⃣ DEPTH DETECTOR
+# ==================================================
+def detect_depth(query: str) -> str:
+    deep_words = ["detail", "itinerary", "complete", "full", "explain", "in depth"]
+    return "DETAILED" if any(w in query.lower() for w in deep_words) else "SHORT"
+
+# ==================================================
+# 7️⃣ PROMPT BUILDER (LLM FALLBACK)
+# ==================================================
+def build_prompt(context, user_query, depth):
     if depth == "SHORT":
         return f"""
-You are ScoutAI, a travel assistant.
-Answer the user's question clearly and positively in plain text.
-Do NOT use bullet points, markdown, or headings.
-
-IMPORTANT RULES:
-- Do NOT start the answer with phrases like:
-"I cannot find", "I don't know", "No information available".
-- If the exact answer is not present, infer the best possible answer
-from the available context and phrase it as a suggestion or insight.
-- Be honest but optimistic and helpful.
-
-Answer the user's question briefly and clearly in plain text.
-Do NOT use bullet points, asterisks, markdown, or headings.
-Do NOT include itinerary, packing list, or long explanations
-unless the user explicitly asks for details.
-
-Use the context only if needed.
+Answer the question briefly and positively.
+Do not use bullet points or markdown.
 
 Context:
 {context}
 
 Question:
 {user_query}
-
-Answer in 5–7 sentences maximum.
 """
-
-    else:  # DETAILED
-        return f"""
-You are ScoutAI, a travel assistant.
-
-The user wants a detailed explanation.
-You may structure the answer with clear sections.
-Use headings, but avoid excessive bullet points.
-
-Include itinerary, best time, difficulty, and tips
-ONLY if relevant.
+    return f"""
+Give a clear and structured explanation.
+Include details only if relevant.
 
 Context:
 {context}
 
 Question:
 {user_query}
-
-Provide a detailed but concise explanation.
 """
-# --------------------------------------------------
-# Depth Helper Fuction
-# --------------------------------------------------
-def detect_depth(query: str) -> str:
-    deep_keywords = [
-        "detailed", "detail", "itinerary", "complete",
-        "full", "everything", "explain", "in depth"
-    ]
 
-    for word in deep_keywords:
-        if word in query.lower():
-            return "DETAILED"
-
-    return "SHORT"
-
-# --------------------------------------------------
-# MAIN RAG PIPELINE
-# --------------------------------------------------
+# ==================================================
+# 8️⃣ MAIN RAG PIPELINE
+# ==================================================
 def rag_pipeline(user_query: str) -> str:
-    # 1️⃣ Intent Gate
-    intent = classify_intent(user_query)
-
-    if intent == "GENERAL":
+    # Intent gate
+    if classify_intent(user_query) == "GENERAL":
         return llm.generate_content(user_query).text
 
-    # 2️⃣ Domain Routing (Soft)
+    # Domain routing
     domain = classify_domain(user_query)
-
     domain_map = {
         "treks": ["treks"],
         "experiences": ["experiences"],
         "locations": ["locations"],
         "multiple": ["treks", "experiences", "locations"]
     }
-
     source_types = domain_map.get(domain, ["treks", "experiences", "locations"])
 
-    # 3️⃣ Primary Retrieval
+    # Retrieve
     chunks = retrieve_chunks(user_query, source_types)
-
-    # 4️⃣ Fallback Retrieval
     if not chunks:
-        chunks = retrieve_chunks(
-            user_query,
-            ["treks", "experiences", "locations"]
+        chunks = retrieve_chunks(user_query, ["treks", "experiences", "locations"])
+
+    if not chunks:
+        return (
+            "I couldn’t find exact information for this, "
+            "but I can help you explore similar treks or experiences if you’d like."
         )
 
-    if not chunks:
-        return "Sorry, mujhe is query se related koi information nahi mili."
+    top = chunks[0]
+    metadata = top.get("metadata", {}) or {}
+    fields = detect_metadata_fields(user_query)
 
-    # 5️⃣ Generation
+    # Metadata-first answer
+    if fields:
+        meta_answer = build_metadata_answer(metadata, fields)
+        if meta_answer.strip():
+            return meta_answer
+
+    # LLM fallback
+    context = "\n\n".join(c["doc_content"] for c in chunks)
     depth = detect_depth(user_query)
-    prompt = build_prompt(chunks, user_query, depth)
-
+    prompt = build_prompt(context, user_query, depth)
     return llm.generate_content(prompt).text
 
-# --------------------------------------------------
-# CLI CHAT LOOP
-# --------------------------------------------------
+# ==================================================
+# 9️⃣ CLI CHAT LOOP
+# ==================================================
 if __name__ == "__main__":
     print("\n🤖 ScoutAI CLI Chat (type 'exit' to quit)\n")
 
     while True:
-        user_message = input("You: ").strip()
+        user_input = input("You: ").strip()
 
-        if user_message.lower() in ["exit", "quit", "bye", "ok, bye", "thanks, bye", "thanks", "thank you"]:
+        if user_input.lower() in ["exit", "quit", "bye", "thanks", "thank you"]:
             print("AI: Bye! 👋 Safe travels.")
             break
 
         start = time.time()
-        answer = rag_pipeline(user_message)
+        answer = rag_pipeline(user_input)
         latency = round(time.time() - start, 2)
 
         print("\nAI:", answer)
