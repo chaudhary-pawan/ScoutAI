@@ -67,25 +67,43 @@ Query:
 # ==================================================
 def detect_metadata_fields(query: str) -> list:
     prompt = f"""
-You are an information extractor.
+You are an information extractor for a travel database.
+
+Your task:
+Identify EXACTLY which metadata fields are REQUIRED to answer the user query.
 
 Available metadata fields:
 price, sale_price, duration, altitude, total_distance,
 suitable_age, include, exclude, address, map_location,
 min_people, max_people, min_day_before_booking, overview
 
-Rules:
-- Return ONLY a JSON array
-- For general description → ["overview"]
-- If none apply → []
+STRICT RULES (VERY IMPORTANT):
+1. If the user explicitly asks for ANY factual detail
+(price, cost, duration, altitude, distance, inclusions, exclusions, age, group size, booking rule),
+you MUST return ONLY those factual fields.
+2. You MUST NOT return "overview" if any factual field applies.
+3. Return ["overview"] ONLY when the query is purely descriptive
+(e.g. "tell me about", "what is this trek", "describe this experience").
+4. Return ONLY a valid JSON array.
+5. Do NOT add explanations or text.
 
-Query:
+Examples:
+- "what is the price of vasuki trek" → ["price","sale_price"]
+- "altitude and duration of vasuki tal trek" → ["altitude","duration"]
+- "what is included and excluded" → ["include","exclude"]
+- "tell me about vasuki tal trek" → ["overview"]
+- "where is it located" → ["address"]
+
+User query:
 {query}
 """
+
     try:
-        return json.loads(llm.generate_content(prompt).text)
-    except:
+        response = llm.generate_content(prompt).text.strip()
+        return json.loads(response)
+    except Exception:
         return []
+
 
 # ==================================================
 # 4️⃣ VECTOR SEARCH
@@ -110,7 +128,7 @@ def retrieve_chunks(query: str, source_types: list):
 # ==================================================
 def build_metadata_answer(metadata: dict, fields: list) -> str:
     lines = []
-
+                            
     for field in fields:
         if field == "price" and metadata.get("price"):
             lines.append(f"Price: ₹{metadata['price']}")
@@ -123,7 +141,7 @@ def build_metadata_answer(metadata: dict, fields: list) -> str:
             lines.append(f"Duration: {days} days")
 
         elif field == "altitude" and metadata.get("altitude"):
-            lines.append(f"Maximum Altitude: {metadata['altitude']} ft")
+            lines.append(f"Maximum Altitude: {metadata['altitude']} ")
 
         elif field == "total_distance" and metadata.get("total_distance"):
             lines.append(f"Total Distance: {metadata['total_distance']} km")
@@ -250,15 +268,12 @@ def rag_pipeline(user_query: str) -> str:
 # 9️⃣ CLI CHAT LOOP
 # ==================================================
 if __name__ == "__main__":
-    print("\n🤖 ScoutAI CLI Chat \n")
+    print("\n🤖 ScoutAI CLI Chat (type 'exit' to quit)\n")
 
     while True:
         user_input = input("You: ").strip()
 
-        rag-push
-        
-        if user_message.lower() in ["exit", "quit", "bye", "ok", "thanks, bye", "thanks", "thank you"]:
-        main
+        if user_input.lower() in ["exit", "quit", "bye", "thanks", "thank you"]:
             print("AI: Bye! 👋 Safe travels.")
             break
 
