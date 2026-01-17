@@ -8,7 +8,7 @@ DB_CONFIG = {
     "port": 6543,
     "dbname": "postgres",
     "user": "postgres.qwozjwjqhgqrgvjadrgm",
-    "password": "Scoutripper193",  # 🔐
+    "password": "------",  # 🔐
     "sslmode": "require"
 }
 
