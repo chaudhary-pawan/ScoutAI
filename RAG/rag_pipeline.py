@@ -220,6 +220,28 @@ Question:
 {user_query}
 """
 
+
+# ==================================================
+# 3.5️⃣ ANSWER SOURCE CLASSIFIER
+# ==================================================
+def classify_answer_source(query: str) -> str:
+    prompt = f"""
+You are deciding where the answer to a user question is stored.
+
+Possible answer sources:
+- METADATA → structured facts like price, duration, altitude, age, inclusions
+- DOC_CONTENT → narrative information like itinerary, overview, FAQs, explanations
+- BOTH → requires both facts and explanation
+
+Return ONLY one word: METADATA, DOC_CONTENT, or BOTH.
+
+Query:
+{query}
+"""
+    return llm.generate_content(prompt).text.strip().upper()
+
+
+
 # ==================================================
 # 8️⃣ MAIN RAG PIPELINE
 # ==================================================
@@ -251,13 +273,45 @@ def rag_pipeline(user_query: str) -> str:
 
     top = chunks[0]
     metadata = top.get("metadata", {}) or {}
-    fields = detect_metadata_fields(user_query)
 
-    # Metadata-first answer
+    # NEW: decide where answer should come from
+    answer_source = classify_answer_source(user_query)
+
+# ------------------------------
+# METADATA ONLY
+# ------------------------------
+    if answer_source == "METADATA":
+        fields = detect_metadata_fields(user_query)
+        if fields:
+            meta_answer = build_metadata_answer(metadata, fields)
+            if meta_answer.strip():
+                return meta_answer
+# ------------------------------
+# DOC_CONTENT ONLY
+# ------------------------------
+    if answer_source == "DOC_CONTENT":
+        context = "\n\n".join(c["doc_content"] for c in chunks)
+        depth = detect_depth(user_query)
+        prompt = build_prompt(context, user_query, depth)
+        return llm.generate_content(prompt).text
+# ------------------------------
+# BOTH (metadata + content)
+# ------------------------------
+    if answer_source == "BOTH":
+        parts = []
+
+    fields = detect_metadata_fields(user_query)
     if fields:
         meta_answer = build_metadata_answer(metadata, fields)
         if meta_answer.strip():
-            return meta_answer
+            parts.append(meta_answer)
+        context = "\n\n".join(c["doc_content"] for c in chunks)
+        depth = detect_depth(user_query)
+        prompt = build_prompt(context, user_query, depth)
+        parts.append(llm.generate_content(prompt).text)
+
+    return "\n\n".join(parts)
+
 
     # LLM fallback
     context = "\n\n".join(c["doc_content"] for c in chunks)
