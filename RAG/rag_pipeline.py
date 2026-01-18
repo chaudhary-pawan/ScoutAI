@@ -112,7 +112,7 @@ def retrieve_chunks(query: str, source_types: list):
     query_embedding = embedder.encode(query).tolist()
 
     response = supabase.rpc(
-        "match_documents_hybrid",
+        "match_documents_hybrid_basic",  # ✅ renamed RPC
         {
             "query_embedding": query_embedding,
             "source_types": source_types,
@@ -122,6 +122,7 @@ def retrieve_chunks(query: str, source_types: list):
     ).execute()
 
     return response.data or []
+
 
 # ==================================================
 # 5️⃣ METADATA ANSWER BUILDER
