@@ -242,9 +242,26 @@ Query:
 
 
 
+# ==================================================
+# SESSION HELPERS
+# ==================================================
+SESSION = {
+    "last_entity_title": None,
+    "last_entity_slug": None,
+    "last_domain": None
+}
+
 def is_followup_query(query: str) -> bool:
     followup_words = ["it", "its", "this", "that", "these", "those"]
     return any(word in query.lower().split() for word in followup_words)
+
+def should_reset_session_on_entity(new_title: str | None) -> bool:
+    if not new_title:
+        return False
+    if not SESSION["last_entity_title"]:
+        return False
+    return new_title.lower() != SESSION["last_entity_title"].lower()
+
 
 
 
@@ -252,25 +269,10 @@ def is_followup_query(query: str) -> bool:
 # 8️⃣ MAIN RAG PIPELINE
 # ==================================================
 def rag_pipeline(user_query: str) -> str:
-    
-    def rag_pipeline(user_query: str) -> str:
     # 🔁 Follow-up resolution
-        if is_followup_query(user_query) and SESSION["last_entity_title"]:
-            user_query = f"{user_query} of {SESSION['last_entity_title']}"
+    if is_followup_query(user_query) and SESSION["last_entity_title"]:
+        user_query = f"{user_query} of {SESSION['last_entity_title']}"
 
-    
-    # ==================================================
-    # SESSION STATE (CHAT MEMORY)
-    # ==================================================
-    SESSION = {
-        "last_entity_title": None,
-        "last_entity_slug": None,
-        "last_domain": None
-    }
-    def is_followup_query(query: str) -> bool:
-        followup_words = ["it", "its", "this", "that", "these", "those"]
-        return any(word in query.lower().split() for word in followup_words)
-    
     # Intent gate
     if classify_intent(user_query) == "GENERAL":
         return llm.generate_content(user_query).text
@@ -298,53 +300,65 @@ def rag_pipeline(user_query: str) -> str:
 
     top = chunks[0]
     metadata = top.get("metadata", {}) or {}
-    
-    # Update session memory
+
+    # 🔁 Reset session ONLY if a different entity is detected
+    new_title = metadata.get("title")
+    if should_reset_session_on_entity(new_title):
+        SESSION["last_entity_title"] = None
+        SESSION["last_entity_slug"] = None
+        SESSION["last_domain"] = None
+
+    # 💾 Update session memory
     if metadata.get("title"):
-        SESSION["last_entity_title"] = metadata.get("title")
+        SESSION["last_entity_title"] = metadata["title"]
 
     if metadata.get("slug"):
-        SESSION["last_entity_slug"] = metadata.get("slug")
+        SESSION["last_entity_slug"] = metadata["slug"]
+
     SESSION["last_domain"] = domain
+    save_session()   # assuming this already exists in your file
 
-
-    # NEW: decide where answer should come from
+    # Decide answer source
     answer_source = classify_answer_source(user_query)
 
-# ------------------------------
-# METADATA ONLY
-# ------------------------------
+    # ------------------------------
+    # METADATA ONLY
+    # ------------------------------
     if answer_source == "METADATA":
         fields = detect_metadata_fields(user_query)
         if fields:
             meta_answer = build_metadata_answer(metadata, fields)
             if meta_answer.strip():
                 return meta_answer
-# ------------------------------
-# DOC_CONTENT ONLY
-# ------------------------------
+
+    # ------------------------------
+    # DOC_CONTENT ONLY
+    # ------------------------------
     if answer_source == "DOC_CONTENT":
         context = "\n\n".join(c["doc_content"] for c in chunks)
         depth = detect_depth(user_query)
         prompt = build_prompt(context, user_query, depth)
         return llm.generate_content(prompt).text
-# ------------------------------
-# BOTH (metadata + content)
-# ------------------------------
+
+    # ------------------------------
+    # BOTH (metadata + content)
+    # ------------------------------
     if answer_source == "BOTH":
         parts = []
 
-    fields = detect_metadata_fields(user_query)
-    if fields:
-        meta_answer = build_metadata_answer(metadata, fields)
-        if meta_answer.strip():
-            parts.append(meta_answer)
+        fields = detect_metadata_fields(user_query)
+        if fields:
+            meta_answer = build_metadata_answer(metadata, fields)
+            if meta_answer.strip():
+                parts.append(meta_answer)
+
         context = "\n\n".join(c["doc_content"] for c in chunks)
         depth = detect_depth(user_query)
         prompt = build_prompt(context, user_query, depth)
         parts.append(llm.generate_content(prompt).text)
 
-    return "\n\n".join(parts)
+        return "\n\n".join(parts)
+
 
 
     # LLM fallback
