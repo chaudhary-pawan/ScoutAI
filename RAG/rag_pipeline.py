@@ -251,6 +251,11 @@ SESSION = {
     "last_domain": None
 }
 
+def save_session():
+    # placeholder for persistence (SQLite / Supabase later)
+    pass
+
+
 def is_followup_query(query: str) -> bool:
     followup_words = ["it", "its", "this", "that", "these", "those"]
     return any(word in query.lower().split() for word in followup_words)
