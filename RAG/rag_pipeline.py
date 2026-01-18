@@ -242,10 +242,35 @@ Query:
 
 
 
+def is_followup_query(query: str) -> bool:
+    followup_words = ["it", "its", "this", "that", "these", "those"]
+    return any(word in query.lower().split() for word in followup_words)
+
+
+
 # ==================================================
 # 8️⃣ MAIN RAG PIPELINE
 # ==================================================
 def rag_pipeline(user_query: str) -> str:
+    
+    def rag_pipeline(user_query: str) -> str:
+    # 🔁 Follow-up resolution
+        if is_followup_query(user_query) and SESSION["last_entity_title"]:
+            user_query = f"{user_query} of {SESSION['last_entity_title']}"
+
+    
+    # ==================================================
+    # SESSION STATE (CHAT MEMORY)
+    # ==================================================
+    SESSION = {
+        "last_entity_title": None,
+        "last_entity_slug": None,
+        "last_domain": None
+    }
+    def is_followup_query(query: str) -> bool:
+        followup_words = ["it", "its", "this", "that", "these", "those"]
+        return any(word in query.lower().split() for word in followup_words)
+    
     # Intent gate
     if classify_intent(user_query) == "GENERAL":
         return llm.generate_content(user_query).text
@@ -273,6 +298,15 @@ def rag_pipeline(user_query: str) -> str:
 
     top = chunks[0]
     metadata = top.get("metadata", {}) or {}
+    
+    # Update session memory
+    if metadata.get("title"):
+        SESSION["last_entity_title"] = metadata.get("title")
+
+    if metadata.get("slug"):
+        SESSION["last_entity_slug"] = metadata.get("slug")
+    SESSION["last_domain"] = domain
+
 
     # NEW: decide where answer should come from
     answer_source = classify_answer_source(user_query)
