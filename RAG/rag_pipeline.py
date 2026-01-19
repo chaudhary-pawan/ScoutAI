@@ -361,15 +361,20 @@ def rag_pipeline(user_query: str) -> str:
     # Decide answer source
     answer_source = classify_answer_source(user_query)
 
-    # ------------------------------
-    # METADATA ONLY
-    # ------------------------------
     if answer_source == "METADATA":
-        fields = detect_metadata_fields(user_query)
-        if fields:
-            meta_answer = build_metadata_answer(metadata, fields)
-            if meta_answer.strip():
-                return meta_answer
+    # 1️⃣ If query is about price, show price table
+        if any(k in user_query.lower() for k in ["price", "cost", "sale", "discount"]):
+            price_table = build_price_table(metadata)
+            if price_table:
+                return price_table
+
+    # 2️⃣ Fallback to normal metadata answer
+    fields = detect_metadata_fields(user_query)
+    if fields:
+        meta_answer = build_metadata_answer(metadata, fields)
+        if meta_answer.strip():
+            return meta_answer
+
 
     # ------------------------------
     # DOC_CONTENT ONLY
