@@ -187,6 +187,29 @@ def build_metadata_answer(metadata: dict, fields: list) -> str:
 
     return "\n".join(lines)
 
+
+# ==================================================
+# PRICE TABLE FORMATTER  ✅ ADD HERE
+# ==================================================
+def build_price_table(metadata: dict) -> str:
+    rows = []
+
+    if metadata.get("price"):
+        rows.append(("Regular Price", f"₹{int(metadata['price']):,}"))
+
+    if metadata.get("sale_price"):
+        rows.append(("Discounted Price", f"₹{int(metadata['sale_price']):,}"))
+
+    if not rows:
+        return ""
+
+    lines = ["Price Details", "-" * 28]
+    for label, value in rows:
+        lines.append(f"{label:<16} {value}")
+
+    return "\n".join(lines)
+
+
 # ==================================================
 # 6️⃣ DEPTH DETECTOR
 # ==================================================
