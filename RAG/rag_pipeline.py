@@ -406,30 +406,19 @@ def rag_pipeline(user_query: str) -> str:
     if answer_source == "BOTH":
         parts = []
 
-    # 1️⃣ Narrative FIRST (trek description only)
+    # 1️⃣ Narrative first (already correct)
     context = "\n\n".join(c["doc_content"] for c in chunks)
     depth = detect_depth(user_query)
-
-    prompt = f"""
-    Describe the trek clearly and concisely.
-    Do NOT mention price, cost, or discounts.
-
-    Context:
-    {context}
-
-    Question:
-    {user_query}
-    """
+    prompt = build_prompt(context, user_query, depth)
     parts.append(llm.generate_content(prompt).text.strip())
 
-    # 2️⃣ Metadata SECOND (price, sale, etc.)
-    fields = detect_metadata_fields(user_query)
-    if fields:
-        meta_answer = build_metadata_answer(metadata, fields)
-        if meta_answer.strip():
-            parts.append(meta_answer)
+    # 2️⃣ Price table second (ONLY if pricing exists)
+    price_table = build_price_table(metadata)
+    if price_table:
+        parts.append(price_table)
 
     return "\n\n".join(parts)
+
 
 
 
