@@ -255,6 +255,18 @@ def save_session():
     # placeholder for persistence (SQLite / Supabase later)
     pass
 
+def is_itinerary_query(query: str) -> bool:
+    itinerary_keywords = [
+        "itinerary",
+        "day wise",
+        "day-wise",
+        "schedule",
+        "plan",
+        "route plan"
+    ]
+    q = query.lower()
+    return any(k in q for k in itinerary_keywords)
+
 
 def is_followup_query(query: str) -> bool:
     followup_words = ["it", "its", "this", "that", "these", "those"]
@@ -341,9 +353,24 @@ def rag_pipeline(user_query: str) -> str:
     # ------------------------------
     if answer_source == "DOC_CONTENT":
         context = "\n\n".join(c["doc_content"] for c in chunks)
+
+    if is_itinerary_query(user_query):
+        prompt = f"""
+    Provide a clear DAY-WISE ITINERARY.
+    Use bullet points or numbered days.
+    Do NOT add extra explanations.
+
+    Context:
+    {context}
+    Question:
+    {user_query}
+    """
+    else:
         depth = detect_depth(user_query)
         prompt = build_prompt(context, user_query, depth)
-        return llm.generate_content(prompt).text
+
+    return llm.generate_content(prompt).text
+
 
     # ------------------------------
     # BOTH (metadata + content)
