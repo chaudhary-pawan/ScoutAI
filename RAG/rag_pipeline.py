@@ -1,3 +1,4 @@
+from importlib import metadata
 import os
 import time
 import json
@@ -298,7 +299,8 @@ Query:
 SESSION = {
     "last_entity_title": None,
     "last_entity_slug": None,
-    "last_domain": None
+    "last_domain": None,
+    "core_details_shown": False
 }
 
 def save_session():
@@ -369,8 +371,15 @@ def rag_pipeline(user_query: str) -> str:
     metadata = top.get("metadata", {}) or {}
     
     core_trek_details = ""
-    if domain == "treks":
-        core_trek_details = build_core_trek_details(metadata)
+
+    explicit_core_request = any(
+        k in user_query.lower()
+        for k in ["altitude", "height", "distance", "duration", "location", "address"]
+)
+
+    if domain == "treks" and (not SESSION["core_details_shown"] or explicit_core_request):
+        core_trek_details = build_core_trek_details(   metadata)
+
 
 
     # 🔁 Reset session ONLY if a different entity is detected
@@ -379,6 +388,8 @@ def rag_pipeline(user_query: str) -> str:
         SESSION["last_entity_title"] = None
         SESSION["last_entity_slug"] = None
         SESSION["last_domain"] = None
+        SESSION["core_details_shown"] = False
+        
 
     # 💾 Update session memory
     if metadata.get("title"):
@@ -406,6 +417,7 @@ def rag_pipeline(user_query: str) -> str:
             meta_answer = build_metadata_answer(metadata, fields)
             if meta_answer.strip():
                 if core_trek_details:
+                    SESSION["core_details_shown"] = True
                     return meta_answer + "\n\n" + core_trek_details
                 return meta_answer
 
@@ -434,6 +446,7 @@ def rag_pipeline(user_query: str) -> str:
         answer = llm.generate_content(prompt).text
         if core_trek_details:
             answer += "\n\n" + core_trek_details
+            SESSION["core_details_shown"] = True
         return answer
 
 
@@ -472,6 +485,7 @@ Question:
         final_answer = "\n\n".join(parts)
         if core_trek_details:
             final_answer += "\n\n" + core_trek_details
+            SESSION["core_details_shown"] = True
         return final_answer
 
 
