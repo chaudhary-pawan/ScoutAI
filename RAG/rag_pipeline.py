@@ -336,12 +336,18 @@ def rag_pipeline(user_query: str) -> str:
     if is_followup_query(user_query) and SESSION["last_entity_title"]:
         user_query = f"{user_query} of {SESSION['last_entity_title']}"
 
+    # ✅ Unified classification (REPLACES intent + domain + answer_source classifiers)
+    classification = classify_query(user_query)
+
+    intent = classification["intent"]
+    domain = classification["domain"]
+    answer_source = classification["answer_source"]
+
     # Intent gate
-    if classify_intent(user_query) == "GENERAL":
+    if intent == "GENERAL":
         return llm.generate_content(user_query).text
 
-    # Domain routing
-    domain = classify_domain(user_query)
+    # Domain routing (UNCHANGED)
     domain_map = {
         "treks": ["treks"],
         "experiences": ["experiences"],
@@ -350,7 +356,7 @@ def rag_pipeline(user_query: str) -> str:
     }
     source_types = domain_map.get(domain, ["treks", "experiences", "locations"])
 
-    # Retrieve
+    # Retrieve (UNCHANGED)
     chunks = retrieve_chunks(user_query, source_types)
     if not chunks:
         chunks = retrieve_chunks(user_query, ["treks", "experiences", "locations"])
@@ -363,18 +369,19 @@ def rag_pipeline(user_query: str) -> str:
 
     top = chunks[0]
     metadata = top.get("metadata", {}) or {}
-    
+
+    # ------------------------------
+    # CORE TREK DETAILS LOGIC (UNCHANGED)
+    # ------------------------------
     core_trek_details = ""
 
     explicit_core_request = any(
         k in user_query.lower()
         for k in ["altitude", "height", "distance", "duration", "location", "address"]
-)
+    )
 
     if domain == "treks" and (not SESSION["core_details_shown"] or explicit_core_request):
-        core_trek_details = build_core_trek_details(   metadata)
-
-
+        core_trek_details = build_core_trek_details(metadata)
 
     # 🔁 Reset session ONLY if a different entity is detected
     new_title = metadata.get("title")
@@ -383,9 +390,8 @@ def rag_pipeline(user_query: str) -> str:
         SESSION["last_entity_slug"] = None
         SESSION["last_domain"] = None
         SESSION["core_details_shown"] = False
-        
 
-    # 💾 Update session memory
+    # 💾 Update session memory (UNCHANGED)
     if metadata.get("title"):
         SESSION["last_entity_title"] = metadata["title"]
 
@@ -393,22 +399,19 @@ def rag_pipeline(user_query: str) -> str:
         SESSION["last_entity_slug"] = metadata["slug"]
 
     SESSION["last_domain"] = domain
-    save_session()   # assuming this already exists in your file
+    save_session()
 
-    # Decide answer source
-    answer_source = classify_answer_source(user_query)
-
-# ------------------------------
-# METADATA ONLY
-# ------------------------------
+    # ------------------------------
+    # METADATA ONLY
+    # ------------------------------
     if answer_source == "METADATA":
-    # 1️⃣ If query is about price, show price table
+        # 1️⃣ Price fast-path
         if any(k in user_query.lower() for k in ["price", "cost", "sale", "discount"]):
             price_table = build_price_table(metadata)
             if price_table:
                 return price_table
 
-    # 2️⃣ Fallback to normal metadata answer
+        # 2️⃣ Fallback metadata answer
         fields = detect_metadata_fields(user_query)
         if fields:
             meta_answer = build_metadata_answer(metadata, fields)
@@ -418,7 +421,6 @@ def rag_pipeline(user_query: str) -> str:
                     return meta_answer + "\n\n" + core_trek_details
                 return meta_answer
 
-
     # ------------------------------
     # DOC_CONTENT ONLY
     # ------------------------------
@@ -427,15 +429,16 @@ def rag_pipeline(user_query: str) -> str:
 
         if is_itinerary_query(user_query):
             prompt = f"""
-    Provide a clear DAY-WISE ITINERARY.
-    Use bullet points or numbered days.
-    Do NOT add extra explanations.
+Provide a clear DAY-WISE ITINERARY.
+Use bullet points or numbered days.
+Do NOT add extra explanations.
 
-    Context:
-    {context}
-    Question:
-    {user_query}
-    """
+Context:
+{context}
+
+Question:
+{user_query}
+"""
         else:
             depth = detect_depth(user_query)
             prompt = build_prompt(context, user_query, depth)
@@ -446,15 +449,13 @@ def rag_pipeline(user_query: str) -> str:
             SESSION["core_details_shown"] = True
         return answer
 
-
-
     # ------------------------------
     # BOTH (metadata + content)
     # ------------------------------
     if answer_source == "BOTH":
         parts = []
 
-        # 1️⃣ Narrative first (itinerary or overview)
+        # 1️⃣ Narrative first
         context = "\n\n".join(c["doc_content"] for c in chunks)
 
         if is_itinerary_query(user_query):
@@ -474,12 +475,13 @@ Question:
             prompt = build_prompt(context, user_query, depth)
 
         parts.append(llm.generate_content(prompt).text.strip())
-        
+
+        # 2️⃣ Core trek details (before price)
         if core_trek_details:
             parts.append(core_trek_details)
             SESSION["core_details_shown"] = True
-        
-        # 2️⃣ Price table second
+
+        # 3️⃣ Price table
         price_table = build_price_table(metadata)
         if price_table:
             parts.append(price_table)
@@ -487,15 +489,14 @@ Question:
         final_answer = "\n\n".join(parts)
         return final_answer
 
-
-
-
-
-    # LLM fallback
+    # ------------------------------
+    # LLM FALLBACK (UNCHANGED)
+    # ------------------------------
     context = "\n\n".join(c["doc_content"] for c in chunks)
     depth = detect_depth(user_query)
     prompt = build_prompt(context, user_query, depth)
     return llm.generate_content(prompt).text
+
 
 # ==================================================
 # 9️⃣ CLI CHAT LOOP
