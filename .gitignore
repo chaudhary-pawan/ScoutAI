@@ -2,4 +2,4 @@ venv/
 __pycache__/
 .env
 *.csv
-__MACOSX/Scoutripper-Database
+__MACOSX/
