@@ -477,15 +477,17 @@ Question:
             prompt = build_prompt(context, user_query, depth)
 
         parts.append(llm.generate_content(prompt).text.strip())
+        
+        if core_trek_details:
+            parts.append(core_trek_details)
+            SESSION["core_details_shown"] = True
+        
         # 2️⃣ Price table second
         price_table = build_price_table(metadata)
         if price_table:
             parts.append(price_table)
 
         final_answer = "\n\n".join(parts)
-        if core_trek_details:
-            final_answer += "\n\n" + core_trek_details
-            SESSION["core_details_shown"] = True
         return final_answer
 
 
