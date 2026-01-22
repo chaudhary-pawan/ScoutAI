@@ -106,6 +106,9 @@ def retrieve_chunks(query: str, source_types: list):
 
 
 
+
+
+
 # ==================================================
 # 3️⃣ METADATA FIELD DETECTOR
 # ==================================================
@@ -325,7 +328,8 @@ SESSION = {
     "last_entity_title": None,
     "last_entity_slug": None,
     "last_domain": None,
-    "core_details_shown": False
+    "core_details_shown": False,
+    "last_classification": None
 }
 
 def save_session():
@@ -367,12 +371,33 @@ def rag_pipeline(user_query: str) -> str:
     if is_followup_query(user_query) and SESSION["last_entity_title"]:
         user_query = f"{user_query} of {SESSION['last_entity_title']}"
 
-    # ✅ Unified classification (REPLACES intent + domain + answer_source classifiers)
-    classification = classify_query(user_query)
+    # 🔒 FAST FACTUAL KEYWORD CHECK (DETERMINISTIC)
+    FACTUAL_KEYWORDS = {
+    "altitude": ["altitude", "height"],
+    "sale_price": ["sale price", "discounted price"],
+    "price": ["price", "cost","Expense"],
+    "total_distance": ["distance", "km"],
+    "address": ["location", "where"],
+    }
 
+    lower_q = user_query.lower()
+    forced_fields = [
+        field
+        for field, keys in FACTUAL_KEYWORDS.items()
+        if any(k in lower_q for k in keys)
+        ]
+
+    # ✅ Unified classification (REPLACES intent + domain + answer_source classifiers)
+    # ✅ Classification cache (follow-up optimization)
+    if is_followup_query(user_query) and SESSION.get("last_classification"):
+        classification = SESSION["last_classification"]
+    else:
+        classification = classify_query(user_query)
+        SESSION["last_classification"] = classification
     intent = classification["intent"]
     domain = classification["domain"]
     answer_source = classification["answer_source"]
+
 
     # Intent gate
     if intent == "GENERAL":
@@ -400,6 +425,18 @@ def rag_pipeline(user_query: str) -> str:
 
     top = chunks[0]
     metadata = top.get("metadata", {}) or {}
+    
+
+    
+    # ------------------------------
+    # 🔒 METADATA-PRIORITY DETECTION
+    # ------------------------------
+    requested_fields = forced_fields or detect_metadata_fields(user_query)
+    metadata_only_query = bool(forced_fields) or (
+        bool(requested_fields) and "overview" not in requested_fields
+)
+
+
 
     # ------------------------------
     # CORE TREK DETAILS LOGIC (UNCHANGED)
@@ -408,7 +445,7 @@ def rag_pipeline(user_query: str) -> str:
 
     explicit_core_request = any(
         k in user_query.lower()
-        for k in ["altitude", "height", "distance", "duration", "location", "address"]
+        for k in ["overview", "details", "about", "information"]
     )
 
     if domain == "treks" and (not SESSION["core_details_shown"] or explicit_core_request):
@@ -421,6 +458,7 @@ def rag_pipeline(user_query: str) -> str:
         SESSION["last_entity_slug"] = None
         SESSION["last_domain"] = None
         SESSION["core_details_shown"] = False
+        SESSION["last_classification"] = None
 
     # 💾 Update session memory (UNCHANGED)
     if metadata.get("title"):
@@ -431,6 +469,15 @@ def rag_pipeline(user_query: str) -> str:
 
     SESSION["last_domain"] = domain
     save_session()
+
+# ------------------------------
+# 🔒 HARD RULE: Metadata overrides LLM routing
+# ------------------------------
+    if metadata_only_query:
+        meta_answer = build_metadata_answer(metadata, requested_fields)
+        if meta_answer.strip():
+            return meta_answer
+
 
     # ------------------------------
     # METADATA ONLY
