@@ -188,6 +188,33 @@ def build_metadata_answer(metadata: dict, fields: list) -> str:
     return "\n".join(lines)
 
 
+
+# ==================================================
+# CORE TREK DETAILS (AUTO-APPENDED)
+# ==================================================
+def build_core_trek_details(metadata: dict) -> str:
+    lines = []
+
+    if metadata.get("address"):
+        lines.append(f"📍 Location: {metadata['address']}")
+
+    if metadata.get("altitude"):
+        lines.append(f"⛰️ Maximum Altitude: {metadata['altitude']} ft")
+
+    if metadata.get("total_distance"):
+        lines.append(f"🥾 Total Trek Distance: {metadata['total_distance']} km")
+
+    if metadata.get("duration"):
+        days = max(1, round(int(metadata["duration"]) / 24))
+        lines.append(f"🗓️ Ideal Duration: {days} days")
+
+    if not lines:
+        return ""
+
+    return "\n".join(lines)
+
+
+
 # ==================================================
 # PRICE TABLE FORMATTER  ✅ ADD HERE
 # ==================================================
@@ -334,12 +361,17 @@ def rag_pipeline(user_query: str) -> str:
 
     if not chunks:
         return (
-            "I couldn’t find exact information for this, "
-            "but I can help you explore similar treks or experiences if you’d like."
+            "I couldn't find exact information for this, "
+            "but I can help you explore similar treks or experiences if you'd like."
         )
 
     top = chunks[0]
     metadata = top.get("metadata", {}) or {}
+    
+    core_trek_details = ""
+    if domain == "treks":
+        core_trek_details = build_core_trek_details(metadata)
+
 
     # 🔁 Reset session ONLY if a different entity is detected
     new_title = metadata.get("title")
@@ -373,7 +405,10 @@ def rag_pipeline(user_query: str) -> str:
         if fields:
             meta_answer = build_metadata_answer(metadata, fields)
             if meta_answer.strip():
+                if core_trek_details:
+                    return meta_answer + "\n\n" + core_trek_details
                 return meta_answer
+
 
     # ------------------------------
     # DOC_CONTENT ONLY
@@ -396,7 +431,11 @@ def rag_pipeline(user_query: str) -> str:
             depth = detect_depth(user_query)
             prompt = build_prompt(context, user_query, depth)
 
-        return llm.generate_content(prompt).text
+        answer = llm.generate_content(prompt).text
+        if core_trek_details:
+            answer += "\n\n" + core_trek_details
+        return answer
+
 
 
     # ------------------------------
@@ -430,7 +469,11 @@ Question:
         if price_table:
             parts.append(price_table)
 
-        return "\n\n".join(parts)
+        final_answer = "\n\n".join(parts)
+        if core_trek_details:
+            final_answer += "\n\n" + core_trek_details
+        return final_answer
+
 
 
 
