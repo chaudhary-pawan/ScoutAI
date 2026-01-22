@@ -26,84 +26,78 @@ llm = genai.GenerativeModel("gemini-2.5-flash")
 
 embedder = SentenceTransformer("all-MiniLM-L6-v2")
 
+
 # ==================================================
-# 1️⃣ INTENT CLASSIFIER
+# 1️⃣ UNIFIED QUERY CLASSIFIER (INTENT + DOMAIN + ANSWER SOURCE)
 # ==================================================
-def classify_intent(query: str) -> str:
+def classify_query(query: str) -> dict:
     prompt = f"""
-Classify the user intent.
+You are a STRICT query classifier for a travel RAG system.
 
-GENERAL → greetings, chit-chat, about AI, casual talk  
-SEARCH → questions about treks, experiences, locations, prices, details
+Your task is to analyze the user query and return a JSON object
+with EXACTLY the following keys:
 
-Return ONLY one word: GENERAL or SEARCH.
+- intent
+- domain
+- answer_source
 
-Query:
-{query}
-"""
-    return llm.generate_content(prompt).text.strip().upper()
+--------------------------------
+INTENT CLASSIFICATION
+--------------------------------
+Return:
+- GENERAL → greetings, chit-chat, casual talk, or non-travel queries
+- SEARCH → questions about treks, experiences, locations, prices, or details
 
-# ==================================================
-# 2️⃣ DOMAIN CLASSIFIER (SOFT)
-# ==================================================
-def classify_domain(query: str) -> str:
-    prompt = f"""
-Classify the domain of the query.
-
-Domains:
+--------------------------------
+DOMAIN CLASSIFICATION
+--------------------------------
+Choose ONE:
 - treks
 - experiences
 - locations
 - multiple
 
-Return ONLY one word.
+Rules:
+- If the query clearly refers to one domain, choose it
+- If it refers to more than one or is ambiguous, choose "multiple"
 
-Query:
+--------------------------------
+ANSWER SOURCE CLASSIFICATION
+--------------------------------
+Choose ONE:
+- METADATA → if the query explicitly asks for factual fields such as:
+price, cost, sale price, duration, altitude, distance,
+inclusions, exclusions, age limit, group size, booking rules, address
+
+- DOC_CONTENT → if the query is purely descriptive or narrative, such as:
+overview, itinerary, explanation, FAQs, route description, difficulty
+
+- BOTH → if the query requires BOTH narrative explanation AND factual details
+
+--------------------------------
+IMPORTANT RULES (DO NOT VIOLATE)
+--------------------------------
+1. If the query asks ONLY for factual details → answer_source MUST be METADATA
+2. If the query asks ONLY for description or explanation → DOC_CONTENT
+3. If the query mixes description + facts → BOTH
+4. Return STRICT JSON only
+5. No explanations, no markdown, no extra text
+
+--------------------------------
+USER QUERY:
 {query}
+
+Return JSON ONLY in this format:
+{{
+"intent": "GENERAL | SEARCH",
+"domain": "treks | experiences | locations | multiple",
+"answer_source": "METADATA | DOC_CONTENT | BOTH"
+}}
 """
-    return llm.generate_content(prompt).text.strip().lower()
+    response = llm.generate_content(prompt).text.strip()
+    return json.loads(response)
 
-# ==================================================
-# 3️⃣ METADATA FIELD DETECTOR
-# ==================================================
-def detect_metadata_fields(query: str) -> list:
-    prompt = f"""
-You are an information extractor for a travel database.
 
-Your task:
-Identify EXACTLY which metadata fields are REQUIRED to answer the user query.
-
-Available metadata fields:
-price, sale_price, duration, altitude, total_distance,
-suitable_age, include, exclude, address, map_location,
-min_people, max_people, min_day_before_booking, overview
-
-STRICT RULES (VERY IMPORTANT):
-1. If the user explicitly asks for ANY factual detail
-(price, cost, duration, altitude, distance, inclusions, exclusions, age, group size, booking rule),
-you MUST return ONLY those factual fields.
-2. You MUST NOT return "overview" if any factual field applies.
-3. Return ["overview"] ONLY when the query is purely descriptive
-(e.g. "tell me about", "what is this trek", "describe this experience").
-4. Return ONLY a valid JSON array.
-5. Do NOT add explanations or text.
-
-Examples:
-- "what is the price of vasuki trek" → ["price","sale_price"]
-- "altitude and duration of vasuki tal trek" → ["altitude","duration"]
-- "what is included and excluded" → ["include","exclude"]
-- "tell me about vasuki tal trek" → ["overview"]
-- "where is it located" → ["address"]
-
-User query:
-{query}
-"""
-
-    try:
-        response = llm.generate_content(prompt).text.strip()
-        return json.loads(response)
-    except Exception:
-        return []
 
 
 # ==================================================
@@ -404,6 +398,9 @@ def rag_pipeline(user_query: str) -> str:
     # Decide answer source
     answer_source = classify_answer_source(user_query)
 
+# ------------------------------
+# METADATA ONLY
+# ------------------------------
     if answer_source == "METADATA":
     # 1️⃣ If query is about price, show price table
         if any(k in user_query.lower() for k in ["price", "cost", "sale", "discount"]):
