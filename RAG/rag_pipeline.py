@@ -24,7 +24,14 @@ supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 genai.configure(api_key=GEMINI_API_KEY)
 llm = genai.GenerativeModel("gemini-2.5-flash")
 
-embedder = SentenceTransformer("all-MiniLM-L6-v2")
+# embedder = SentenceTransformer("all-MiniLM-L6-v2")
+embedder_cache = {}
+
+def get_embedder():
+    if "model" not in embedder_cache:
+        print(" Loading AI Model... (First time only)")
+        embedder_cache["model"] = SentenceTransformer("all-MiniLM-L6-v2")
+    return embedder_cache["model"]
 
 # ==================================================
 # 1️⃣ UNIFIED QUERY CLASSIFIER (JSON-SAFE, PROMPT UNCHANGED)
@@ -90,7 +97,7 @@ Return JSON ONLY.
 # 4️⃣ VECTOR SEARCH
 # ==================================================
 def retrieve_chunks(query: str, source_types: list):
-    query_embedding = embedder.encode(query).tolist()
+    query_embedding = get_embedder().encode(query).tolist()
 
     response = supabase.rpc(
         "match_documents_hybrid_basic",  # ✅ renamed RPC
