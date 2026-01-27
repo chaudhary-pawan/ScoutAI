@@ -17,9 +17,16 @@ SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
 if not all([SUPABASE_URL, SUPABASE_KEY, GEMINI_API_KEY]):
-    raise RuntimeError("Missing environment variables")
+    print(" Warning: Environment variables missing locally. Ensure they are set in the Render dashboard.")
 
-supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
+# supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
+supabase_client = None
+
+def get_supabase():
+    global supabase_client
+    if supabase_client is None:
+        supabase_client = create_client(SUPABASE_URL, SUPABASE_KEY)
+    return supabase_client
 
 genai.configure(api_key=GEMINI_API_KEY)
 llm = genai.GenerativeModel("gemini-2.5-flash")
@@ -99,7 +106,7 @@ Return JSON ONLY.
 def retrieve_chunks(query: str, source_types: list):
     query_embedding = get_embedder().encode(query).tolist()
 
-    response = supabase.rpc(
+    response = get_supabase().rpc(
         "match_documents_hybrid_basic",  # ✅ renamed RPC
         {
             "query_embedding": query_embedding,
