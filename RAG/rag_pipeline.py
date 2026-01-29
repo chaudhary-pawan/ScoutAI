@@ -1,10 +1,13 @@
+from importlib import metadata
 import os
 import time
 import json
 from dotenv import load_dotenv
+from pyparsing import lru_cache
 from supabase import create_client
-from sentence_transformers import SentenceTransformer
+from huggingface_hub import InferenceClient
 import google.generativeai as genai
+from functools import lru_cache
 
 # ==================================================
 # ENV SETUP
@@ -14,8 +17,9 @@ load_dotenv()
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+HF_TOKEN = os.getenv("HF_TOKEN")
 
-if not all([SUPABASE_URL, SUPABASE_KEY, GEMINI_API_KEY]):
+if not all([SUPABASE_URL, SUPABASE_KEY, GEMINI_API_KEY, HF_TOKEN]):
     raise RuntimeError("Missing environment variables")
 
 supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
@@ -23,44 +27,116 @@ supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 genai.configure(api_key=GEMINI_API_KEY)
 llm = genai.GenerativeModel("gemini-2.5-flash")
 
-embedder = SentenceTransformer("all-MiniLM-L6-v2")
+# ==================================================
+# HF INFERENCE EMBEDDING CLIENT (REPLACES TORCH MODEL)
+# ==================================================
+HF_EMBED_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
+
+hf_client = InferenceClient(
+    model=HF_EMBED_MODEL,
+    token=HF_TOKEN
+)
+
+def embed_query_safe(query: str, retries: int = 3) -> list[float]:
+    for i in range(retries):
+        try:
+            return hf_client.feature_extraction(query)
+        except Exception:
+            if i == retries - 1:
+                raise
+            time.sleep(1.5)
 
 # ==================================================
-# 1️⃣ INTENT CLASSIFIER
+# 1️⃣ UNIFIED QUERY CLASSIFIER (JSON-SAFE, PROMPT UNCHANGED)
 # ==================================================
-def classify_intent(query: str) -> str:
+def classify_query(query: str) -> dict:
     prompt = f"""
-Classify the user intent.
+You are a STRICT query classifier for a travel RAG system.
 
-GENERAL → greetings, chit-chat, about AI, casual talk  
-SEARCH → questions about treks, experiences, locations, prices, details
+Your task is to analyze the user query and return a JSON object
+with EXACTLY the following keys:
 
-Return ONLY one word: GENERAL or SEARCH.
+- intent
+- domain
+- answer_source
 
-Query:
-{query}
-"""
-    return llm.generate_content(prompt).text.strip().upper()
+--------------------------------
+INTENT CLASSIFICATION
+--------------------------------
+Return:
+- GENERAL → greetings, chit-chat, casual talk, or non-travel queries
+- SEARCH → questions about treks, experiences, locations, prices, or details
 
-# ==================================================
-# 2️⃣ DOMAIN CLASSIFIER (SOFT)
-# ==================================================
-def classify_domain(query: str) -> str:
-    prompt = f"""
-Classify the domain of the query.
-
-Domains:
+--------------------------------
+DOMAIN CLASSIFICATION
+--------------------------------
+Choose ONE:
 - treks
 - experiences
 - locations
 - multiple
 
-Return ONLY one word.
+--------------------------------
+ANSWER SOURCE CLASSIFICATION
+--------------------------------
+Choose ONE:
+- METADATA → factual fields (price, sale_price, duration, altitude, total_distance,
+suitable_age, include, exclude, address, map_location,
+min_people, max_people, min_day_before_booking, overview
+)
+- DOC_CONTENT → narrative info (Description, Content, itinerary, overview, FAQs)
+- BOTH → narrative + facts
 
-Query:
+--------------------------------
+USER QUERY:
 {query}
+
+Return JSON ONLY.
 """
-    return llm.generate_content(prompt).text.strip().lower()
+
+    response = llm.generate_content(prompt).text.strip()
+
+    try:
+        return json.loads(response)
+
+    except json.JSONDecodeError:
+        # ✅ ONLY FIX: safe fallback (no prompt change)
+        return {
+            "intent": "SEARCH",
+            "domain": "treks",
+            "answer_source": "BOTH"
+        }
+
+
+from functools import lru_cache
+
+@lru_cache(maxsize=1024)
+def classify_query_cached(query: str) -> dict:
+    return classify_query(query)
+
+
+# ==================================================
+# 4️⃣ VECTOR SEARCH
+# ==================================================
+def retrieve_chunks(query: str, source_types: list):
+    query_embedding = embed_query_safe(query)
+
+    response = supabase.rpc(
+        "match_documents_hybrid_basic",  # ✅ renamed RPC
+        {
+            "query_embedding": query_embedding,
+            "source_types": source_types,
+            "match_threshold": 0.30,
+            "match_count": 5
+        }
+    ).execute()
+
+    return response.data or []
+
+
+
+
+
 
 # ==================================================
 # 3️⃣ METADATA FIELD DETECTOR
@@ -105,23 +181,6 @@ User query:
         return []
 
 
-# ==================================================
-# 4️⃣ VECTOR SEARCH
-# ==================================================
-def retrieve_chunks(query: str, source_types: list):
-    query_embedding = embedder.encode(query).tolist()
-
-    response = supabase.rpc(
-        "match_documents_hybrid",
-        {
-            "query_embedding": query_embedding,
-            "source_types": source_types,
-            "match_threshold": 0.30,
-            "match_count": 5
-        }
-    ).execute()
-
-    return response.data or []
 
 # ==================================================
 # 5️⃣ METADATA ANSWER BUILDER
@@ -186,6 +245,56 @@ def build_metadata_answer(metadata: dict, fields: list) -> str:
 
     return "\n".join(lines)
 
+
+
+# ==================================================
+# CORE TREK DETAILS (AUTO-APPENDED)
+# ==================================================
+def build_core_trek_details(metadata: dict) -> str:
+    lines = []
+
+    if metadata.get("address"):
+        lines.append(f"📍 Location: {metadata['address']}")
+
+    if metadata.get("altitude"):
+        lines.append(f"⛰️ Maximum Altitude: {metadata['altitude']} ft")
+
+    if metadata.get("total_distance"):
+        lines.append(f"🥾 Total Trek Distance: {metadata['total_distance']} km")
+
+    if metadata.get("duration"):
+        days = max(1, round(int(metadata["duration"]) / 24))
+        lines.append(f"🗓️ Ideal Duration: {days} days")
+
+    if not lines:
+        return ""
+
+    return "\n".join(lines)
+
+
+
+# ==================================================
+# PRICE TABLE FORMATTER  ✅ ADD HERE
+# ==================================================
+def build_price_table(metadata: dict) -> str:
+    rows = []
+
+    if metadata.get("price"):
+        rows.append(("Regular Price", f"₹{int(metadata['price']):,}"))
+
+    if metadata.get("sale_price"):
+        rows.append(("Sale Price", f"₹{int(metadata['sale_price']):,}"))
+
+    if not rows:
+        return ""
+
+    lines = ["Price Details", "-" * 28]
+    for label, value in rows:
+        lines.append(f"{label:<16} {value}")
+
+    return "\n".join(lines)
+
+
 # ==================================================
 # 6️⃣ DEPTH DETECTOR
 # ==================================================
@@ -211,6 +320,7 @@ Question:
     return f"""
 Give a clear and structured explanation.
 Include details only if relevant.
+Do not repeat things if the data is shown in core trek details.
 
 Context:
 {context}
@@ -219,16 +329,92 @@ Question:
 {user_query}
 """
 
+
+
+# ==================================================
+# SESSION HELPERS
+# ==================================================
+SESSION = {
+    "last_entity_title": None,
+    "last_entity_slug": None,
+    "last_domain": None,
+    "core_details_shown": False,
+    "last_classification": None
+}
+
+def save_session():
+    # placeholder for persistence (SQLite / Supabase later)
+    pass
+
+def is_itinerary_query(query: str) -> bool:
+    itinerary_keywords = [
+        "itinerary",
+        "day wise",
+        "day-wise",
+        "schedule",
+        "plan",
+        "route plan"
+    ]
+    q = query.lower()
+    return any(k in q for k in itinerary_keywords)
+
+
+def is_followup_query(query: str) -> bool:
+    followup_words = ["it", "its", "this", "that", "these", "those"]
+    return any(word in query.lower().split() for word in followup_words)
+
+def should_reset_session_on_entity(new_title: str | None) -> bool:
+    if not new_title:
+        return False
+    if not SESSION["last_entity_title"]:
+        return False
+    return new_title.lower() != SESSION["last_entity_title"].lower()
+
+
+
+
 # ==================================================
 # 8️⃣ MAIN RAG PIPELINE
 # ==================================================
 def rag_pipeline(user_query: str) -> str:
+    # 🔁 Follow-up resolution
+    if is_followup_query(user_query) and SESSION["last_entity_title"]:
+        user_query = f"{user_query} of {SESSION['last_entity_title']}"
+
+    # 🔒 FAST FACTUAL KEYWORD CHECK (DETERMINISTIC)
+    FACTUAL_KEYWORDS = {
+    "altitude": ["altitude", "height"],
+    "sale_price": ["sale price", "discounted price"],
+    "price": ["price", "cost","Expense"],
+    "total_distance": ["distance", "km"],
+    "address": ["location", "where"],
+    }
+
+    lower_q = user_query.lower()
+    forced_fields = [
+        field
+        for field, keys in FACTUAL_KEYWORDS.items()
+        if any(k in lower_q for k in keys)
+        ]
+
+    # ✅ Unified classification (REPLACES intent + domain + answer_source classifiers)
+    # ✅ Classification cache (follow-up optimization)
+    if is_followup_query(user_query) and SESSION.get("last_classification"):
+        classification = SESSION["last_classification"]
+    else:
+        classification = classify_query_cached(user_query)
+        SESSION["last_classification"] = classification
+    intent = classification["intent"]
+    domain = classification["domain"]
+    answer_source = classification["answer_source"]
+
+    
+
     # Intent gate
-    if classify_intent(user_query) == "GENERAL":
+    if intent == "GENERAL":
         return llm.generate_content(user_query).text
 
-    # Domain routing
-    domain = classify_domain(user_query)
+    # Domain routing (UNCHANGED)
     domain_map = {
         "treks": ["treks"],
         "experiences": ["experiences"],
@@ -237,32 +423,186 @@ def rag_pipeline(user_query: str) -> str:
     }
     source_types = domain_map.get(domain, ["treks", "experiences", "locations"])
 
-    # Retrieve
-    chunks = retrieve_chunks(user_query, source_types)
-    if not chunks:
-        chunks = retrieve_chunks(user_query, ["treks", "experiences", "locations"])
+    # ------------------------------
+    # 🔁 FOLLOW-UP SHORT-CIRCUIT
+    # ------------------------------
+    chunks = []
 
-    if not chunks:
-        return (
-            "I couldn’t find exact information for this, "
-            "but I can help you explore similar treks or experiences if you’d like."
-        )
+    if is_followup_query(user_query) and SESSION.get("last_metadata"):
+    # Reuse previous entity — skip vector search
+        metadata = SESSION["last_metadata"]
+    else:
+        chunks = retrieve_chunks(user_query, source_types)
+        if not chunks:
+            chunks = retrieve_chunks(user_query, ["treks", "experiences", "locations"])
 
-    top = chunks[0]
-    metadata = top.get("metadata", {}) or {}
-    fields = detect_metadata_fields(user_query)
+    if chunks:
+        top = chunks[0]
+        metadata = top.get("metadata", {}) or {}
+        SESSION["last_metadata"] = metadata
+    else:
+        metadata = SESSION.get("last_metadata", {}) or {}
+        SESSION["last_metadata"] = metadata
 
-    # Metadata-first answer
-    if fields:
-        meta_answer = build_metadata_answer(metadata, fields)
+
+
+    
+# ------------------------------
+# 🔒 METADATA-PRIORITY DETECTION
+# ------------------------------
+    if forced_fields:
+        requested_fields = forced_fields
+    else:
+        requested_fields = detect_metadata_fields(user_query)
+
+    metadata_only_query = (
+        bool(forced_fields) or
+        (bool(requested_fields) and "overview" not in requested_fields)
+)
+
+
+
+    # ------------------------------
+    # CORE TREK DETAILS LOGIC (UNCHANGED)
+    # ------------------------------
+    core_trek_details = ""
+
+    explicit_core_request = any(
+        k in user_query.lower()
+        for k in ["overview", "details", "about", "information"]
+    )
+
+    if domain == "treks" and (not SESSION["core_details_shown"] or explicit_core_request):
+        core_trek_details = build_core_trek_details(metadata)
+
+    # 🔁 Reset session ONLY if a different entity is detected
+    new_title = metadata.get("title")
+    if should_reset_session_on_entity(new_title):
+        SESSION["last_entity_title"] = None
+        SESSION["last_entity_slug"] = None
+        SESSION["last_domain"] = None
+        SESSION["core_details_shown"] = False
+        SESSION["last_classification"] = None
+
+    # 💾 Update session memory (UNCHANGED)
+    if metadata.get("title"):
+        SESSION["last_entity_title"] = metadata["title"]
+
+    if metadata.get("slug"):
+        SESSION["last_entity_slug"] = metadata["slug"]
+
+    SESSION["last_domain"] = domain
+    save_session()
+
+# ------------------------------
+# 🔒 HARD RULE: Metadata overrides LLM routing
+# ------------------------------
+    if metadata_only_query:
+        meta_answer = build_metadata_answer(metadata, requested_fields)
         if meta_answer.strip():
             return meta_answer
 
-    # LLM fallback
+
+    # ------------------------------
+    # METADATA ONLY
+    # ------------------------------
+    if answer_source == "METADATA":
+        # 1️⃣ Price fast-path
+        if any(k in user_query.lower() for k in ["price", "cost", "sale", "discount"]):
+            price_table = build_price_table(metadata)
+            if price_table:
+                return price_table
+
+        # 2️⃣ Fallback metadata answer
+        fields = detect_metadata_fields(user_query)
+        if fields:
+            meta_answer = build_metadata_answer(metadata, fields)
+            if meta_answer.strip():
+                if core_trek_details:
+                    SESSION["core_details_shown"] = True
+                    return meta_answer + "\n\n" + core_trek_details
+                return meta_answer
+
+    # ------------------------------
+    # DOC_CONTENT ONLY
+    # ------------------------------
+    if answer_source == "DOC_CONTENT":
+        if chunks:
+            context = "\n\n".join(c["doc_content"] for c in chunks)
+        else:
+            context = ""
+
+
+        if is_itinerary_query(user_query):
+            prompt = f"""
+Provide a clear DAY-WISE ITINERARY.
+Use bullet points or numbered days.
+Do NOT add extra explanations.
+
+    Context:
+    {context}
+
+    Question:
+    {user_query}
+"""
+        else:
+            depth = detect_depth(user_query)
+            prompt = build_prompt(context, user_query, depth)
+
+        answer = llm.generate_content(prompt).text
+        if core_trek_details:
+            answer += "\n\n" + core_trek_details
+            SESSION["core_details_shown"] = True
+        return answer
+
+    # ------------------------------
+    # BOTH (metadata + content)
+    # ------------------------------
+    if answer_source == "BOTH":
+        parts = []
+
+        # 1️⃣ Narrative first
+        context = "\n\n".join(c["doc_content"] for c in chunks)
+
+        if is_itinerary_query(user_query):
+            prompt = f"""
+Provide a clear DAY-WISE ITINERARY.
+Use bullet points or numbered days.
+Do NOT add extra explanations.
+
+Context:
+{context}
+
+Question:
+{user_query}
+"""
+        else:
+            depth = detect_depth(user_query)
+            prompt = build_prompt(context, user_query, depth)
+
+        parts.append(llm.generate_content(prompt).text.strip())
+
+        # 2️⃣ Core trek details (before price)
+        if core_trek_details:
+            parts.append(core_trek_details)
+            SESSION["core_details_shown"] = True
+
+        # 3️⃣ Price table
+        price_table = build_price_table(metadata)
+        if price_table:
+            parts.append(price_table)
+
+        final_answer = "\n\n".join(parts)
+        return final_answer
+
+    # ------------------------------
+    # LLM FALLBACK (UNCHANGED)
+    # ------------------------------
     context = "\n\n".join(c["doc_content"] for c in chunks)
     depth = detect_depth(user_query)
     prompt = build_prompt(context, user_query, depth)
     return llm.generate_content(prompt).text
+
 
 # ==================================================
 # 9️⃣ CLI CHAT LOOP
