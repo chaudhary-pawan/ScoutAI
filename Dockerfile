@@ -1,5 +1,5 @@
 # 1. Lighter version of Python
-FROM python:3.9-slim
+FROM python:3.10-slim
 
 # 2. folder inside container
 WORKDIR /app
