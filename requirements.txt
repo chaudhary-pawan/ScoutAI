@@ -19,4 +19,6 @@ requests>=2.31.0
 
 fastapi
 uvicorn
+pydantic
+huggingface_hub 
 
