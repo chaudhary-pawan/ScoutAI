@@ -37,14 +37,24 @@ hf_client = InferenceClient(
     token=HF_TOKEN
 )
 
+import numpy as np
+
 def embed_query_safe(query: str, retries: int = 3) -> list[float]:
     for i in range(retries):
         try:
-            return hf_client.feature_extraction(query)
+            emb = hf_client.feature_extraction(query)
+
+            # 🔒 FORCE JSON-SAFE TYPE
+            if isinstance(emb, np.ndarray):
+                emb = emb.tolist()
+
+            return emb
+
         except Exception:
             if i == retries - 1:
                 raise
             time.sleep(1.5)
+
 
 # ==================================================
 # 1️⃣ UNIFIED QUERY CLASSIFIER (JSON-SAFE, PROMPT UNCHANGED)
@@ -331,6 +341,8 @@ Question:
 
 
 
+
+
 # ==================================================
 # SESSION HELPERS
 # ==================================================
@@ -370,6 +382,12 @@ def should_reset_session_on_entity(new_title: str | None) -> bool:
         return False
     return new_title.lower() != SESSION["last_entity_title"].lower()
 
+# For Streaming responses (if needed)
+def stream_gemini(prompt: str):
+    response = llm.generate_content(prompt, stream=True)
+    for chunk in response:
+        if chunk.text:
+            yield chunk.text
 
 
 
@@ -549,11 +567,15 @@ Do NOT add extra explanations.
             depth = detect_depth(user_query)
             prompt = build_prompt(context, user_query, depth)
 
-        answer = llm.generate_content(prompt).text
-        if core_trek_details:
-            answer += "\n\n" + core_trek_details
+        def doc_content_stream():
+            for chunk in stream_gemini(prompt):
+                yield chunk
+
+            if core_trek_details:
+                yield "\n\n" + core_trek_details
             SESSION["core_details_shown"] = True
-        return answer
+
+        return doc_content_stream()
 
     # ------------------------------
     # BOTH (metadata + content)
@@ -580,7 +602,8 @@ Question:
             depth = detect_depth(user_query)
             prompt = build_prompt(context, user_query, depth)
 
-        parts.append(llm.generate_content(prompt).text.strip())
+        parts.append("".join(stream_gemini(prompt)).strip())
+
 
         # 2️⃣ Core trek details (before price)
         if core_trek_details:
@@ -621,5 +644,12 @@ if __name__ == "__main__":
         answer = rag_pipeline(user_input)
         latency = round(time.time() - start, 2)
 
-        print("\nAI:", answer)
+        print("\nAI:", end=" ", flush=True)
+
+        if hasattr(answer, "__iter__") and not isinstance(answer, str):
+            for chunk in answer:
+                print(chunk, end="", flush=True)
+            print()
+        else:
+            print(answer)
         print(f"(Latency: {latency}s)\n")
