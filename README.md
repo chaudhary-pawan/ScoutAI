@@ -148,3 +148,4 @@ You: bye
 AI: Bye! 👋 Safe travels.
 ```
 ---
+That's how it works.
