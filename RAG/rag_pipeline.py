@@ -76,6 +76,14 @@ INTENT CLASSIFICATION
 Return:
 - GENERAL → greetings, chit-chat, casual talk, or non-travel queries
 - SEARCH → questions about treks, experiences, locations, prices, or details
+- RECOMMENDATION → requests for suggestions, recommendations, or "best" options
+
+Examples of RECOMMENDATION:
+- "your best experience"
+- "recommend a trek"
+- "suggest a good location"
+- "what's the best trek"
+- "can you recommend something"
 
 --------------------------------
 DOMAIN CLASSIFICATION
@@ -306,6 +314,55 @@ def build_price_table(metadata: dict) -> str:
 
 
 # ==================================================
+# RECOMMENDATION RESPONSE BUILDER
+# ==================================================
+def build_recommendation_response(metadata: dict, domain: str) -> str:
+    """Build a friendly recommendation response"""
+    lines = []
+    
+    title = metadata.get("title", "")
+    if not title:
+        return "I'd love to recommend something, but I'm having trouble finding the details right now."
+    
+    # Friendly intro based on domain
+    if domain == "treks":
+        lines.append(f"I'd recommend the **{title}**!")
+    elif domain == "experiences":
+        lines.append(f"You should check out **{title}**!")
+    elif domain == "locations":
+        lines.append(f"**{title}** is a great choice!")
+    else:
+        lines.append(f"I'd suggest **{title}**!")
+    
+    # Add overview if available
+    overview = metadata.get("overview", {})
+    if isinstance(overview, dict) and overview.get("desc"):
+        desc_list = overview["desc"]
+        if isinstance(desc_list, list) and len(desc_list) > 0:
+            # Get first description and limit to 200 chars
+            first_desc = desc_list[0]
+            if len(first_desc) > 200:
+                lines.append(f"\n{first_desc[:200]}...")
+            else:
+                lines.append(f"\n{first_desc}")
+    
+    # Add key details
+    if metadata.get("address"):
+        lines.append(f"\n📍 **Location**: {metadata['address']}")
+    
+    if metadata.get("price") and metadata.get("sale_price"):
+        lines.append(f"💰 **Price**: ₹{int(metadata['sale_price']):,} (Regular: ₹{int(metadata['price']):,})")
+    elif metadata.get("sale_price"):
+        lines.append(f"💰 **Price**: ₹{int(metadata['sale_price']):,}")
+    
+    if metadata.get("duration"):
+        days = max(1, round(int(metadata["duration"]) / 24))
+        lines.append(f"⏱️ **Duration**: {days} days")
+    
+    return "\n".join(lines)
+
+
+# ==================================================
 # 6️⃣ DEPTH DETECTOR
 # ==================================================
 def detect_depth(query: str) -> str:
@@ -427,10 +484,28 @@ def rag_pipeline(user_query: str) -> str:
     answer_source = classification["answer_source"]
 
     
-
     # Intent gate
     if intent == "GENERAL":
         return llm.generate_content(user_query).text
+
+    # Recommendation intent
+    if intent == "RECOMMENDATION":
+        chunks = retrieve_chunks(user_query, source_types)
+        
+        if not chunks:
+            # Fallback: try broader search
+            chunks = retrieve_chunks(f"popular {domain}", source_types)
+        
+        if chunks:
+            metadata = chunks[0].get("metadata", {}) or {}
+            SESSION["last_metadata"] = metadata
+            SESSION["last_entity_title"] = metadata.get("title")
+            SESSION["last_domain"] = domain
+            
+            return build_recommendation_response(metadata, domain)
+        else:
+            domain_singular = domain[:-1] if domain.endswith('s') else domain
+            return f"I'd love to recommend a {domain_singular}, but I don't have any information available right now. Could you ask about something specific?"
 
     # Domain routing (UNCHANGED)
     domain_map = {
@@ -458,9 +533,22 @@ def rag_pipeline(user_query: str) -> str:
         top = chunks[0]
         metadata = top.get("metadata", {}) or {}
         SESSION["last_metadata"] = metadata
+        
+        # Check if the best match has a very low similarity (weak match)
+        similarity = top.get("similarity", 0)
+        if similarity < 0.35 and intent == "SEARCH":
+            return "I apologize, but I don't have information about that in my database. I can help you with details about treks, experiences, and locations available through Scoutripper. Could you please ask about something else or rephrase your question?"
     else:
         metadata = SESSION.get("last_metadata", {}) or {}
         SESSION["last_metadata"] = metadata
+
+    # ------------------------------
+    # 🚫 NO INFORMATION CHECK
+    # ------------------------------
+    # If no chunks found AND no cached metadata AND it's a SEARCH query
+    # Return a clear "no information" message
+    if not chunks and not metadata and intent == "SEARCH":
+        return "I apologize, but I don't have information about that in my database. I can help you with details about treks, experiences, and locations available through Scoutripper. Could you please ask about something else or rephrase your question?"
 
 
 
