@@ -78,12 +78,22 @@ Return:
 - SEARCH → questions about treks, experiences, locations, prices, or details
 - RECOMMENDATION → requests for suggestions, recommendations, or "best" options
 
+CRITICAL: When the user asks about "your best", "recommend", or "suggest" 
+in the context of TRAVEL OFFERINGS (treks, experiences, locations), 
+this is ALWAYS a RECOMMENDATION, NOT GENERAL.
+
 Examples of RECOMMENDATION:
-- "your best experience"
-- "recommend a trek"
-- "suggest a good location"
-- "what's the best trek"
-- "can you recommend something"
+- "your best experience" → RECOMMENDATION (asking for Scoutripper's best experience offering)
+- "recommend a trek" → RECOMMENDATION
+- "suggest a good location" → RECOMMENDATION  
+- "what's the best trek" → RECOMMENDATION
+- "can you recommend something" → RECOMMENDATION
+- "your top experience" → RECOMMENDATION
+
+Examples of GENERAL (NOT travel-related):
+- "hello" → GENERAL
+- "how are you" → GENERAL
+- "what can you do" → GENERAL
 
 --------------------------------
 DOMAIN CLASSIFICATION
