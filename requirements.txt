@@ -5,9 +5,7 @@ python-dotenv>=1.0.0
 supabase>=2.3.0
 postgrest>=0.16.0
 
-# Embeddings
-sentence-transformers>=2.2.2
-torch>=2.0.0
+
 
 # LLM (Gemini)
 google-generativeai>=0.5.0
@@ -18,9 +16,9 @@ requests>=2.31.0
 
 
 
-spacy
-sentence-transformers
-torch
+
 fastapi
 uvicorn
+pydantic
+huggingface_hub 
 
