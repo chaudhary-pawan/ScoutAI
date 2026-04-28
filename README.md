@@ -1,6 +1,6 @@
 # 🧭 ScoutAI — Intent-Driven RAG Chatbot (CLI)
 
-ScoutAI is an **intent-aware, retrieval-augmented chatbot** built for travel platforms like **Scoutripper**.  
+ScoutAI is an **intent-aware, retrieval-augmented chatbot** built for travel platforms.  
 It intelligently decides **when to search the database** and **when to answer directly**, ensuring helpful, concise, and user-friendly responses.
 
 The system is designed to **avoid negative responses**, **reduce hallucinations**, and **adapt answer depth based on user intent**.
